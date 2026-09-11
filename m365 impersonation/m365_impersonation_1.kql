@@ -1,0 +1,14 @@
+let lookback = 90d;
+let brandTypo = @'(^|\.)((ms365|m365|owa|teams|msft|microsoft365)[-.](live|owa|device|update|portal|auth|sso|secure|test)|(live|owa|device|update|portal|auth|sso|secure)[-.](ms365|m365|owa|teams))';
+DnsEvents
+| where TimeGenerated >= ago(lookback)
+| where isnotempty(Name)
+| extend Domain = tolower(trim(@"\.", Name))
+| where Domain matches regex brandTypo
+| summarize
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    QueryCount = count(),
+    Clients = dcount(Computer)
+    by Domain
+| order by LastSeen desc
