@@ -1,0 +1,73 @@
+let lookback = 90d;
+let brandPattern = @'(facebook|instagram|whatsapp|tiktok|twitter)';
+let typoPattern = @'(faceb00k|facebok|faceboook|facbook|face-book|instragram|instagr4m|instagrarn|instgram|instagran|instaqram|insta-gram|whats4pp|whatsap|whatsaap|whats-app|tik-tok|tikttok|tikt0k|tiktox|tw1tter|twiter|twiitter|twltter|twit-ter)';
+let lure = @'(login|signin|verify|verification|secure|security|support|help|account|auth|sso|update|recover|recovery|appeal|business|ads|wallet|pay|payment)';
+let brandLure = strcat(
+    @'(^|[.-])((facebook|fb|instagram|insta|whatsapp|tiktok|twitter)[.-]?',
+    lure,
+    @'|',
+    lure,
+    @'[.-]?(facebook|fb|instagram|insta|whatsapp|tiktok|twitter))([.-]|$)'
+);
+let xLure = strcat(
+    @'(^|[.-])(x[.-]',
+    lure,
+    @'|',
+    lure,
+    @'[.-]x)([.-]|$)'
+);
+DnsEvents
+| where TimeGenerated >= ago(lookback)
+| where isnotempty(Name)
+| extend Domain = tolower(trim(@"\.", Name))
+//
+// Remove known official domains and their subdomains.
+//
+| where not(
+    Domain == "facebook.com" or Domain endswith ".facebook.com" or
+    Domain == "facebook.net" or Domain endswith ".facebook.net" or
+    Domain == "facebookmail.com" or Domain endswith ".facebookmail.com" or
+    Domain == "fb.com" or Domain endswith ".fb.com" or
+    Domain == "fbcdn.net" or Domain endswith ".fbcdn.net" or
+    Domain == "fbsbx.com" or Domain endswith ".fbsbx.com" or
+    Domain == "instagram.com" or Domain endswith ".instagram.com" or
+    Domain == "cdninstagram.com" or Domain endswith ".cdninstagram.com" or
+    Domain == "whatsapp.com" or Domain endswith ".whatsapp.com" or
+    Domain == "whatsapp.net" or Domain endswith ".whatsapp.net" or
+    Domain == "tiktok.com" or Domain endswith ".tiktok.com" or
+    Domain == "tiktokv.com" or Domain endswith ".tiktokv.com" or
+    Domain == "tiktokcdn.com" or Domain endswith ".tiktokcdn.com" or
+    Domain == "twitter.com" or Domain endswith ".twitter.com" or
+    Domain == "x.com" or Domain endswith ".x.com"
+)
+| where
+    (Domain matches regex brandPattern) or
+    (Domain matches regex typoPattern) or
+    (Domain matches regex brandLure) or
+    (Domain matches regex xLure)
+| extend SuspectedBrand = case(
+    Domain matches regex @'(facebook|faceb00k|facebok|faceboook|facbook|face-book|(^|[.-])fb[.-])',
+        "Facebook",
+    Domain matches regex @'(instagram|instragram|instagr4m|instagrarn|instgram|instagran|instaqram|insta-gram|(^|[.-])insta[.-])',
+        "Instagram",
+    Domain matches regex @'(whatsapp|whats4pp|whatsap|whatsaap|whats-app)',
+        "WhatsApp",
+    Domain matches regex @'(tiktok|tik-tok|tikttok|tikt0k|tiktox)',
+        "TikTok",
+    "Twitter/X"
+)
+| extend DetectionReason = case(
+    Domain matches regex typoPattern,
+        "Known typo or visual lookalike",
+    (Domain matches regex brandLure) or (Domain matches regex xLure),
+        "Brand combined with credential or account lure",
+    "Brand name found outside known official domains"
+)
+| summarize
+    FirstSeen = min(TimeGenerated),
+    LastSeen = max(TimeGenerated),
+    QueryCount = count(),
+    Clients = dcount(Computer),
+    ClientSamples = make_set(Computer, 10)
+    by SuspectedBrand, DetectionReason, Domain
+| order by LastSeen desc
